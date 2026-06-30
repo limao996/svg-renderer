@@ -1,29 +1,59 @@
 use std::{env, hint::black_box, time::Instant};
 
-use svg_renderer::{RenderOptions, VulkanSvgRenderer};
+use futures::stream::{FuturesUnordered, StreamExt};
+use svg_renderer::{RenderOptions, VulkanSvgPipelineRenderer, VulkanSvgRenderer};
 
-// cargo run --example render_perf --release -- 100
+// cargo run --example render_perf --release -- 100 12
 
 const DEFAULT_ITERATIONS: usize = 100;
+const DEFAULT_PIPELINE_WORKERS: usize = 4;
 const WARMUP_ITERATIONS: usize = 10;
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    pollster::block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let iterations = env::args()
         .nth(1)
         .map(|value| value.parse::<usize>())
         .transpose()?
         .unwrap_or(DEFAULT_ITERATIONS);
+    let pipeline_workers = env::args()
+        .nth(2)
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(DEFAULT_PIPELINE_WORKERS);
 
     if iterations == 0 {
         return Err("渲染次数必须大于 0".into());
+    }
+
+    if pipeline_workers == 0 {
+        return Err("流水线 worker 数必须大于 0".into());
     }
 
     println!("SVG 渲染性能");
     let svg = build_svg();
     let options = RenderOptions::new(WIDTH, HEIGHT)?;
     println!("渲染尺寸：{WIDTH}x{HEIGHT}");
+    println!("统计次数：{iterations}，预热次数：{WARMUP_ITERATIONS}");
+
+    run_sync_renderer_perf(&svg, &options, iterations)?;
+    run_pipeline_renderer_perf(&svg, &options, iterations, pipeline_workers).await?;
+
+    Ok(())
+}
+
+fn run_sync_renderer_perf(
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!();
+    println!("同步渲染器");
 
     let init_start = Instant::now();
     let mut renderer = VulkanSvgRenderer::new()?;
@@ -34,21 +64,101 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     for _ in 0..WARMUP_ITERATIONS {
-        black_box(renderer.render_svg(&svg, &options)?);
+        black_box(renderer.render_svg(svg, options)?);
     }
-    println!("统计次数：{iterations}，预热次数：{WARMUP_ITERATIONS}");
 
     let mut timings = Vec::with_capacity(iterations);
     let total_start = Instant::now();
 
     for _ in 0..iterations {
         let frame_start = Instant::now();
-        let image = renderer.render_svg(&svg, &options)?;
+        let image = renderer.render_svg(svg, options)?;
         black_box(image.rgba.len());
         timings.push(frame_start.elapsed());
     }
 
-    let total_elapsed = total_start.elapsed();
+    print_frame_stats(iterations, total_start.elapsed(), timings);
+    Ok(())
+}
+
+async fn run_pipeline_renderer_perf(
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+    workers: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!();
+    println!("流水线渲染器");
+    println!("worker 数：{workers}");
+
+    let init_start = Instant::now();
+    let renderer = VulkanSvgPipelineRenderer::new(workers)?;
+    let init_elapsed = init_start.elapsed();
+    println!(
+        "流水线初始化耗时：{:.2} ms",
+        init_elapsed.as_secs_f64() * 1_000.0
+    );
+
+    run_pipeline_queue(&renderer, svg, options, WARMUP_ITERATIONS, workers).await?;
+
+    let total_start = Instant::now();
+    let timings = run_pipeline_queue(&renderer, svg, options, iterations, workers).await?;
+
+    print_pipeline_stats(iterations, workers, total_start.elapsed(), timings);
+    Ok(())
+}
+
+async fn run_pipeline_queue(
+    renderer: &VulkanSvgPipelineRenderer,
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+    queue_depth: usize,
+) -> Result<Vec<std::time::Duration>, svg_renderer::SvgRenderError> {
+    let mut in_flight = FuturesUnordered::new();
+    let mut submitted = 0usize;
+    let mut completed = 0usize;
+    let mut timings = Vec::with_capacity(iterations);
+
+    while submitted < iterations && in_flight.len() < queue_depth {
+        in_flight.push(render_pipeline_frame(renderer, svg, options));
+        submitted += 1;
+    }
+
+    while let Some(result) = in_flight.next().await {
+        let (elapsed, image) = result?;
+        black_box(image.rgba.len());
+        timings.push(elapsed);
+        completed += 1;
+
+        if submitted < iterations {
+            in_flight.push(render_pipeline_frame(renderer, svg, options));
+            submitted += 1;
+        }
+
+        if completed == iterations {
+            break;
+        }
+    }
+
+    Ok(timings)
+}
+
+async fn render_pipeline_frame(
+    renderer: &VulkanSvgPipelineRenderer,
+    svg: &str,
+    options: &RenderOptions,
+) -> Result<(std::time::Duration, svg_renderer::ImageData), svg_renderer::SvgRenderError> {
+    let start = Instant::now();
+    let image = renderer.render_svg(svg, options).await?;
+    Ok((start.elapsed(), image))
+}
+
+fn print_frame_stats(
+    iterations: usize,
+    total_elapsed: std::time::Duration,
+    mut timings: Vec<std::time::Duration>,
+) {
     timings.sort_unstable();
 
     let average_ms = total_elapsed.as_secs_f64() * 1_000.0 / iterations as f64;
@@ -66,8 +176,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("最短耗时：{min_ms:.2} ms/帧");
     println!("最长耗时：{max_ms:.2} ms/帧");
     println!("吞吐量：{fps:.2} 帧/秒");
+}
 
-    Ok(())
+fn print_pipeline_stats(
+    iterations: usize,
+    workers: usize,
+    total_elapsed: std::time::Duration,
+    mut timings: Vec<std::time::Duration>,
+) {
+    timings.sort_unstable();
+
+    let average_wall_ms = total_elapsed.as_secs_f64() * 1_000.0 / iterations as f64;
+    let average_latency_ms = timings
+        .iter()
+        .map(|elapsed| elapsed.as_secs_f64() * 1_000.0)
+        .sum::<f64>()
+        / iterations as f64;
+    let median_latency_ms = timings[iterations / 2].as_secs_f64() * 1_000.0;
+    let min_latency_ms = timings[0].as_secs_f64() * 1_000.0;
+    let max_latency_ms = timings[iterations - 1].as_secs_f64() * 1_000.0;
+    let fps = iterations as f64 / total_elapsed.as_secs_f64();
+
+    println!(
+        "总渲染耗时：{:.2} ms",
+        total_elapsed.as_secs_f64() * 1_000.0
+    );
+    println!("平均墙钟耗时：{average_wall_ms:.2} ms/帧");
+    println!("平均队列延迟：{average_latency_ms:.2} ms/帧");
+    println!("中位队列延迟：{median_latency_ms:.2} ms/帧");
+    println!("最短队列延迟：{min_latency_ms:.2} ms/帧");
+    println!("最长队列延迟：{max_latency_ms:.2} ms/帧");
+    println!("队列深度：{workers}");
+    println!("吞吐量：{fps:.2} 帧/秒");
 }
 
 fn build_svg() -> String {

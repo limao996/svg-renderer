@@ -19,3 +19,9 @@ skia-safe = { version = "0.99", default-features = true, features = [
     "freetype-woff2",
 ] }
 thiserror = "2"
+
+[dev-dependencies]
+futures = "0.3"
+pollster = "0.4"
+
+
