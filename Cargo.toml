@@ -1,0 +1,21 @@
+[package]
+name = "svg-renderer"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["vulkan-backend"]
+vulkan-backend = []
+
+[dependencies]
+ash = { version = "0.38", default-features = true }
+skia-safe = { version = "0.99", default-features = true, features = [
+    "vulkan",
+    "svg",
+    "webp",
+    "jpeg",
+    "no-compile",
+    "ureq",
+    "freetype-woff2",
+] }
+thiserror = "2"
