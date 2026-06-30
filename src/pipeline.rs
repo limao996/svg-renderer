@@ -1,6 +1,10 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
     task::{Context, Poll, Waker},
     thread::{self, JoinHandle},
 };
@@ -10,9 +14,14 @@ use crate::{
 };
 
 pub struct VulkanSvgPipelineRenderer {
-    sender: mpsc::Sender<WorkerMessage>,
-    workers: Vec<JoinHandle<()>>,
+    workers: Vec<Worker>,
+    next_worker: AtomicUsize,
     resource_search_dirs: Vec<PathBuf>,
+}
+
+struct Worker {
+    sender: mpsc::Sender<WorkerMessage>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl VulkanSvgPipelineRenderer {
@@ -21,21 +30,24 @@ impl VulkanSvgPipelineRenderer {
             return Err(SvgRenderError::InvalidWorkerCount { workers });
         }
 
-        let (sender, receiver) = mpsc::channel();
-        let receiver = Arc::new(Mutex::new(receiver));
-        let mut handles = Vec::with_capacity(workers);
+        let mut worker_handles = Vec::with_capacity(workers);
 
         for _ in 0..workers {
+            let (sender, receiver) = mpsc::channel();
             let (ready_sender, ready_receiver) = mpsc::channel();
-            handles.push(spawn_worker(Arc::clone(&receiver), ready_sender));
+            let handle = spawn_worker(receiver, ready_sender);
             ready_receiver
                 .recv()
                 .map_err(|_| SvgRenderError::PipelineClosed)??;
+            worker_handles.push(Worker {
+                sender,
+                handle: Some(handle),
+            });
         }
 
         Ok(Self {
-            sender,
-            workers: handles,
+            workers: worker_handles,
+            next_worker: AtomicUsize::new(0),
             resource_search_dirs: Vec::new(),
         })
     }
@@ -111,7 +123,12 @@ impl VulkanSvgPipelineRenderer {
             response,
         };
 
-        if self.sender.send(WorkerMessage::Render(job)).is_err() {
+        let worker_index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.workers.len();
+        if self.workers[worker_index]
+            .sender
+            .send(WorkerMessage::Render(job))
+            .is_err()
+        {
             future.complete(Err(SvgRenderError::PipelineClosed));
         }
 
@@ -121,18 +138,17 @@ impl VulkanSvgPipelineRenderer {
 
 impl Drop for VulkanSvgPipelineRenderer {
     fn drop(&mut self) {
-        for _ in &self.workers {
-            let _ = self.sender.send(WorkerMessage::Stop);
-        }
-
-        while let Some(worker) = self.workers.pop() {
-            let _ = worker.join();
+        for worker in &mut self.workers {
+            let _ = worker.sender.send(WorkerMessage::Stop);
+            if let Some(handle) = worker.handle.take() {
+                let _ = handle.join();
+            }
         }
     }
 }
 
 fn spawn_worker(
-    receiver: Arc<Mutex<mpsc::Receiver<WorkerMessage>>>,
+    receiver: mpsc::Receiver<WorkerMessage>,
     ready: mpsc::Sender<Result<(), SvgRenderError>>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
@@ -148,12 +164,7 @@ fn spawn_worker(
         };
 
         loop {
-            let message = match receiver.lock() {
-                Ok(receiver) => receiver.recv(),
-                Err(_) => return,
-            };
-
-            match message {
+            match receiver.recv() {
                 Ok(WorkerMessage::Render(job)) => {
                     let result = run_job(
                         &mut renderer,
