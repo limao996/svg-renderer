@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use svg_renderer::{RenderOptions, VulkanSvgPipelineRenderer};
+use svg_renderer::{RenderOptions, SvgPipelineRenderer};
 
 // cargo run --example render_pipeline --release
 
@@ -32,7 +32,8 @@ async fn render() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&output_dir)?;
 
     let options = RenderOptions::new(512, 320)?;
-    let renderer = VulkanSvgPipelineRenderer::new(4)?;
+    let renderer = SvgPipelineRenderer::new(4)?;
+    println!("backend: {:?}", renderer.backend());
     let png = renderer.render_svg_to_png(SVG, &options).await?;
     fs::write(output_dir.join("pipeline-sample.png"), png)?;
 

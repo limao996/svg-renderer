@@ -5,10 +5,10 @@ edition = "2024"
 
 [features]
 default = ["vulkan-backend"]
-vulkan-backend = []
+vulkan-backend = ["dep:ash"]
 
 [dependencies]
-ash = { version = "0.38", default-features = true }
+ash = { version = "0.38", default-features = true, optional = true }
 skia-safe = { version = "0.99", default-features = true, features = [
     "vulkan",
     "svg",
@@ -23,5 +23,4 @@ thiserror = "2"
 [dev-dependencies]
 futures = "0.3"
 pollster = "0.4"
-
 

@@ -1,7 +1,11 @@
-use std::{env, hint::black_box, time::Instant};
+use std::{env, future::Future, hint::black_box, pin::Pin, time::Instant};
 
 use futures::stream::{FuturesUnordered, StreamExt};
-use svg_renderer::{RenderOptions, VulkanSvgPipelineRenderer, VulkanSvgRenderer};
+use svg_renderer::{
+    CpuSvgPipelineRenderer, CpuSvgRenderer, ImageData, RenderOptions, SvgRenderError,
+};
+#[cfg(feature = "vulkan-backend")]
+use svg_renderer::{VulkanSvgPipelineRenderer, VulkanSvgRenderer};
 
 // cargo run --example render_perf --release -- 100 12
 
@@ -41,30 +45,116 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("渲染尺寸：{WIDTH}x{HEIGHT}");
     println!("统计次数：{iterations}，预热次数：{WARMUP_ITERATIONS}");
 
-    run_sync_renderer_perf(&svg, &options, iterations)?;
-    run_pipeline_renderer_perf(&svg, &options, iterations, pipeline_workers).await?;
+    run_cpu_sync_renderer_perf(&svg, &options, iterations)?;
+    #[cfg(feature = "vulkan-backend")]
+    run_vulkan_sync_renderer_perf(&svg, &options, iterations)?;
+
+    run_cpu_pipeline_renderer_perf(&svg, &options, iterations, pipeline_workers).await?;
+    #[cfg(feature = "vulkan-backend")]
+    run_vulkan_pipeline_renderer_perf(&svg, &options, iterations, pipeline_workers).await?;
 
     Ok(())
 }
 
-fn run_sync_renderer_perf(
+trait SyncRenderer {
+    fn render_svg_sync(
+        &mut self,
+        svg: &str,
+        options: &RenderOptions,
+    ) -> Result<ImageData, SvgRenderError>;
+}
+
+impl SyncRenderer for CpuSvgRenderer {
+    fn render_svg_sync(
+        &mut self,
+        svg: &str,
+        options: &RenderOptions,
+    ) -> Result<ImageData, SvgRenderError> {
+        self.render_svg(svg, options)
+    }
+}
+
+#[cfg(feature = "vulkan-backend")]
+impl SyncRenderer for VulkanSvgRenderer {
+    fn render_svg_sync(
+        &mut self,
+        svg: &str,
+        options: &RenderOptions,
+    ) -> Result<ImageData, SvgRenderError> {
+        self.render_svg(svg, options)
+    }
+}
+
+trait PipelineRenderer {
+    fn render_svg_pipeline<'a>(
+        &'a self,
+        svg: &'a str,
+        options: &'a RenderOptions,
+    ) -> Pin<Box<dyn Future<Output = Result<ImageData, SvgRenderError>> + 'a>>;
+}
+
+impl PipelineRenderer for CpuSvgPipelineRenderer {
+    fn render_svg_pipeline<'a>(
+        &'a self,
+        svg: &'a str,
+        options: &'a RenderOptions,
+    ) -> Pin<Box<dyn Future<Output = Result<ImageData, SvgRenderError>> + 'a>> {
+        Box::pin(self.render_svg(svg, options))
+    }
+}
+
+#[cfg(feature = "vulkan-backend")]
+impl PipelineRenderer for VulkanSvgPipelineRenderer {
+    fn render_svg_pipeline<'a>(
+        &'a self,
+        svg: &'a str,
+        options: &'a RenderOptions,
+    ) -> Pin<Box<dyn Future<Output = Result<ImageData, SvgRenderError>> + 'a>> {
+        Box::pin(self.render_svg(svg, options))
+    }
+}
+
+fn run_cpu_sync_renderer_perf(
     svg: &str,
     options: &RenderOptions,
     iterations: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!();
-    println!("同步渲染器");
+    println!("CPU 同步渲染器");
+
+    let init_start = Instant::now();
+    let mut renderer = CpuSvgRenderer::new()?;
+    let init_elapsed = init_start.elapsed();
+    print_init_elapsed("渲染器初始化耗时", init_elapsed);
+    run_sync_renderer_queue(&mut renderer, svg, options, iterations)?;
+    Ok(())
+}
+
+#[cfg(feature = "vulkan-backend")]
+fn run_vulkan_sync_renderer_perf(
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!();
+    println!("Vulkan 同步渲染器");
 
     let init_start = Instant::now();
     let mut renderer = VulkanSvgRenderer::new()?;
     let init_elapsed = init_start.elapsed();
-    println!(
-        "渲染器初始化耗时：{:.2} ms",
-        init_elapsed.as_secs_f64() * 1_000.0
-    );
+    print_init_elapsed("渲染器初始化耗时", init_elapsed);
+    run_sync_renderer_queue(&mut renderer, svg, options, iterations)?;
+    Ok(())
+}
 
+fn run_sync_renderer_queue(
+    renderer: &mut impl SyncRenderer,
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+) -> Result<(), SvgRenderError> {
     for _ in 0..WARMUP_ITERATIONS {
-        black_box(renderer.render_svg(svg, options)?);
+        black_box(renderer.render_svg_sync(svg, options)?);
     }
 
     let mut timings = Vec::with_capacity(iterations);
@@ -72,7 +162,7 @@ fn run_sync_renderer_perf(
 
     for _ in 0..iterations {
         let frame_start = Instant::now();
-        let image = renderer.render_svg(svg, options)?;
+        let image = renderer.render_svg_sync(svg, options)?;
         black_box(image.rgba.len());
         timings.push(frame_start.elapsed());
     }
@@ -81,23 +171,45 @@ fn run_sync_renderer_perf(
     Ok(())
 }
 
-async fn run_pipeline_renderer_perf(
+async fn run_cpu_pipeline_renderer_perf(
     svg: &str,
     options: &RenderOptions,
     iterations: usize,
     workers: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!();
-    println!("流水线渲染器");
+    println!("CPU 流水线渲染器");
+    println!("worker 数：{workers}");
+
+    let init_start = Instant::now();
+    let renderer = CpuSvgPipelineRenderer::new(workers)?;
+    let init_elapsed = init_start.elapsed();
+    print_init_elapsed("流水线初始化耗时", init_elapsed);
+
+    run_pipeline_queue(&renderer, svg, options, WARMUP_ITERATIONS, workers).await?;
+
+    let total_start = Instant::now();
+    let timings = run_pipeline_queue(&renderer, svg, options, iterations, workers).await?;
+
+    print_pipeline_stats(iterations, workers, total_start.elapsed(), timings);
+    Ok(())
+}
+
+#[cfg(feature = "vulkan-backend")]
+async fn run_vulkan_pipeline_renderer_perf(
+    svg: &str,
+    options: &RenderOptions,
+    iterations: usize,
+    workers: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!();
+    println!("Vulkan 流水线渲染器");
     println!("worker 数：{workers}");
 
     let init_start = Instant::now();
     let renderer = VulkanSvgPipelineRenderer::new(workers)?;
     let init_elapsed = init_start.elapsed();
-    println!(
-        "流水线初始化耗时：{:.2} ms",
-        init_elapsed.as_secs_f64() * 1_000.0
-    );
+    print_init_elapsed("流水线初始化耗时", init_elapsed);
 
     run_pipeline_queue(&renderer, svg, options, WARMUP_ITERATIONS, workers).await?;
 
@@ -109,12 +221,12 @@ async fn run_pipeline_renderer_perf(
 }
 
 async fn run_pipeline_queue(
-    renderer: &VulkanSvgPipelineRenderer,
+    renderer: &impl PipelineRenderer,
     svg: &str,
     options: &RenderOptions,
     iterations: usize,
     queue_depth: usize,
-) -> Result<Vec<std::time::Duration>, svg_renderer::SvgRenderError> {
+) -> Result<Vec<std::time::Duration>, SvgRenderError> {
     let mut in_flight = FuturesUnordered::new();
     let mut submitted = 0usize;
     let mut completed = 0usize;
@@ -145,13 +257,17 @@ async fn run_pipeline_queue(
 }
 
 async fn render_pipeline_frame(
-    renderer: &VulkanSvgPipelineRenderer,
+    renderer: &impl PipelineRenderer,
     svg: &str,
     options: &RenderOptions,
-) -> Result<(std::time::Duration, svg_renderer::ImageData), svg_renderer::SvgRenderError> {
+) -> Result<(std::time::Duration, ImageData), SvgRenderError> {
     let start = Instant::now();
-    let image = renderer.render_svg(svg, options).await?;
+    let image = renderer.render_svg_pipeline(svg, options).await?;
     Ok((start.elapsed(), image))
+}
+
+fn print_init_elapsed(label: &str, elapsed: std::time::Duration) {
+    println!("{label}：{:.2} ms", elapsed.as_secs_f64() * 1_000.0);
 }
 
 fn print_frame_stats(

@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf};
 
 use svg_renderer::{
-    JpegAlphaOption, JpegDownsample, JpegOptions, RenderOptions, VulkanSvgRenderer,
-    WebpCompression, WebpOptions,
+    JpegAlphaOption, JpegDownsample, JpegOptions, RenderOptions, SvgRenderer, WebpCompression,
+    WebpOptions,
 };
 
 const SVG: &str = r##"
@@ -37,8 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&output_dir)?;
 
     let options = RenderOptions::new(512, 320)?;
-    let mut renderer = VulkanSvgRenderer::new()?;
+    let mut renderer = SvgRenderer::new()?;
     renderer.set_resource_search_dirs([PathBuf::from("examples/assets"), output_dir.clone()]);
+    println!("backend: {:?}", renderer.backend());
 
     let image = renderer.render_svg(SVG, &options)?;
     fs::write(output_dir.join("sample.rgba"), &image.rgba)?;

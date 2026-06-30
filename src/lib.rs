@@ -1,19 +1,14 @@
-#![cfg_attr(not(feature = "vulkan-backend"), allow(unused))]
-
-#[cfg(not(feature = "vulkan-backend"))]
-compile_error!(
-    "svg-renderer requires the default `vulkan-backend` feature; this crate does not provide a non-Vulkan backend."
-);
-
 mod error;
 mod image;
 mod options;
 mod pipeline;
 mod renderer;
 mod resource;
+#[cfg(feature = "vulkan-backend")]
 mod vulkan;
 
 pub(crate) use resource::CachedResourceProvider;
+#[cfg(feature = "vulkan-backend")]
 pub(crate) use vulkan::VulkanState;
 
 pub use error::SvgRenderError;
@@ -22,7 +17,12 @@ pub use options::{
     JpegAlphaOption, JpegDownsample, JpegOptions, RenderOptions, RenderSize, WebpCompression,
     WebpOptions,
 };
+#[cfg(feature = "vulkan-backend")]
 pub use pipeline::VulkanSvgPipelineRenderer;
+pub use pipeline::{CpuSvgPipelineRenderer, SvgPipelineRenderer};
+#[cfg(feature = "vulkan-backend")]
+pub use renderer::VulkanSvgRenderer;
 pub use renderer::{
-    VulkanSvgRenderer, render_svg, render_svg_to_jpeg, render_svg_to_png, render_svg_to_webp,
+    CpuSvgRenderer, RenderBackend, SvgRenderer, render_svg, render_svg_to_jpeg, render_svg_to_png,
+    render_svg_to_webp,
 };
