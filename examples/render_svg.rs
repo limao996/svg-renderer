@@ -29,9 +29,6 @@ const SVG: &str = r##"
   <text x="64" y="286" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#ffffff">
     Vulkan SVG Renderer
   </text>
-  <image xlink:href="https://www.dmoe.cc/random.php" x="0" y="0" width="192" height="108"/>
-  <image xlink:href="1.png" x="192" y="108" width="100" height="100"/>
-  <image xlink:href="D:\Home\Pictures\壁纸\3F47EF03DD476217E3A78864490E842B.jpg" x="192" y="208" width="192" height="108"/>
 </svg>
 "##;
 
