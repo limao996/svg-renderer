@@ -18,18 +18,28 @@ use crate::{
     CachedResourceProvider, ImageData, JpegOptions, RenderOptions, SvgRenderError, WebpOptions,
 };
 
+/// Rendering backend kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderBackend {
+    /// Skia raster (CPU) backend.
     Cpu,
+    /// Skia Vulkan (GPU) backend.
     Vulkan,
 }
 
+/// CPU-based SVG renderer using Skia's raster backend.
+///
+/// Suitable for most environments; no GPU required. Each instance keeps
+/// an internal readback buffer that is reused across calls to reduce
+/// allocation overhead.
 pub struct CpuSvgRenderer {
     resource_provider: CachedResourceProvider,
+    /// Reusable readback buffer to avoid per-call allocations.
     readback_buffer: Vec<u8>,
 }
 
 impl CpuSvgRenderer {
+    /// Creates a new CPU renderer with a default font manager.
     pub fn new() -> Result<Self, SvgRenderError> {
         Ok(Self {
             resource_provider: CachedResourceProvider::new(FontMgr::default()),
@@ -37,11 +47,16 @@ impl CpuSvgRenderer {
         })
     }
 
+    /// Appends a directory to the resource search path.
+    ///
+    /// Resources (fonts, images referenced by the SVG) are looked up in
+    /// all registered directories and, as a fallback, via HTTP(S).
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.resource_provider.add_search_dir(dir);
         self
     }
 
+    /// Replaces the resource search path with the given directories.
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -51,6 +66,7 @@ impl CpuSvgRenderer {
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data.
     pub fn render_svg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -60,6 +76,7 @@ impl CpuSvgRenderer {
         read_surface_pixels(&mut surface, options, &mut self.readback_buffer)
     }
 
+    /// Renders an SVG and encodes the result as PNG.
     pub fn render_svg_to_png(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -73,6 +90,7 @@ impl CpuSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Renders an SVG and encodes the result as JPEG.
     pub fn render_svg_to_jpeg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -87,6 +105,7 @@ impl CpuSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Renders an SVG and encodes the result as WebP.
     pub fn render_svg_to_webp(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -101,6 +120,7 @@ impl CpuSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Internal: creates a raster surface, parses the SVG, renders onto it.
     fn render_surface(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -115,6 +135,10 @@ impl CpuSvgRenderer {
     }
 }
 
+/// Vulkan GPU-accelerated SVG renderer using Skia's Vulkan backend.
+///
+/// Requires the `vulkan-backend` feature. Falls back to CPU if Vulkan
+/// initialization fails (see [`SvgRenderer::new`]).
 #[cfg(feature = "vulkan-backend")]
 pub struct VulkanSvgRenderer {
     vulkan: Arc<VulkanState>,
@@ -125,6 +149,9 @@ pub struct VulkanSvgRenderer {
 
 #[cfg(feature = "vulkan-backend")]
 impl VulkanSvgRenderer {
+    /// Creates a Vulkan renderer: loads the Vulkan library, enumerates
+    /// devices, picks a graphics-capable queue, and wraps it in a Skia
+    /// direct context.
     pub fn new() -> Result<Self, SvgRenderError> {
         let vulkan = Arc::new(VulkanState::new()?);
         let get_proc_vulkan = Arc::clone(&vulkan);
@@ -157,11 +184,13 @@ impl VulkanSvgRenderer {
         })
     }
 
+    /// Appends a directory to the resource search path.
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.resource_provider.add_search_dir(dir);
         self
     }
 
+    /// Replaces the resource search path with the given directories.
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -171,6 +200,9 @@ impl VulkanSvgRenderer {
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data.
+    ///
+    /// Flushes the GPU command buffer before readback.
     pub fn render_svg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -181,6 +213,9 @@ impl VulkanSvgRenderer {
         read_surface_pixels(&mut surface, options, &mut self.readback_buffer)
     }
 
+    /// Renders an SVG and encodes the result as PNG.
+    ///
+    /// Flushes the GPU command buffer before encoding.
     pub fn render_svg_to_png(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -199,6 +234,7 @@ impl VulkanSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Renders an SVG and encodes the result as JPEG.
     pub fn render_svg_to_jpeg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -215,6 +251,7 @@ impl VulkanSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Renders an SVG and encodes the result as WebP.
     pub fn render_svg_to_webp(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -231,6 +268,7 @@ impl VulkanSvgRenderer {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Internal: creates a GPU-backed surface, parses the SVG, renders it.
     fn render_surface(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -257,11 +295,20 @@ impl VulkanSvgRenderer {
 #[cfg(feature = "vulkan-backend")]
 impl Drop for VulkanSvgRenderer {
     fn drop(&mut self) {
+        // Abandon the Skia context so it doesn't try to destroy Vulkan
+        // resources that the VulkanState drop will handle.
         self.context.abandon();
+        // Keep a reference alive via strong_count read to prevent
+        // compiler from optimizing away the Arc.
         let _ = Arc::strong_count(&self.vulkan);
     }
 }
 
+/// Auto-selecting SVG renderer.
+///
+/// Tries Vulkan first (when the `vulkan-backend` feature is enabled);
+/// falls back to CPU on any error during Vulkan init. This makes it a
+/// safe default for most use cases.
 pub struct SvgRenderer {
     renderer: SvgRendererBackend,
 }
@@ -273,6 +320,7 @@ enum SvgRendererBackend {
 }
 
 impl SvgRenderer {
+    /// Creates a renderer, preferring Vulkan over CPU.
     pub fn new() -> Result<Self, SvgRenderError> {
         #[cfg(feature = "vulkan-backend")]
         if let Ok(renderer) = VulkanSvgRenderer::new() {
@@ -286,6 +334,7 @@ impl SvgRenderer {
         })
     }
 
+    /// Returns which backend is currently in use.
     pub fn backend(&self) -> RenderBackend {
         match &self.renderer {
             SvgRendererBackend::Cpu(_) => RenderBackend::Cpu,
@@ -294,6 +343,7 @@ impl SvgRenderer {
         }
     }
 
+    /// Appends a directory to the resource search path.
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         match &mut self.renderer {
             SvgRendererBackend::Cpu(renderer) => {
@@ -307,6 +357,7 @@ impl SvgRenderer {
         self
     }
 
+    /// Replaces the resource search path with the given directories.
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -324,6 +375,7 @@ impl SvgRenderer {
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data.
     pub fn render_svg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -336,6 +388,7 @@ impl SvgRenderer {
         }
     }
 
+    /// Renders an SVG and encodes the result as PNG.
     pub fn render_svg_to_png(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -348,6 +401,7 @@ impl SvgRenderer {
         }
     }
 
+    /// Renders an SVG and encodes the result as JPEG.
     pub fn render_svg_to_jpeg(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -365,6 +419,7 @@ impl SvgRenderer {
         }
     }
 
+    /// Renders an SVG and encodes the result as WebP.
     pub fn render_svg_to_webp(
         &mut self,
         svg: impl AsRef<[u8]>,
@@ -383,6 +438,7 @@ impl SvgRenderer {
     }
 }
 
+/// Creates an RGBA8888 premultiplied-alpha image info for the given dimensions.
 fn rgba_image_info(width: i32, height: i32) -> ImageInfo {
     ImageInfo::new(
         (width, height),
@@ -392,6 +448,7 @@ fn rgba_image_info(width: i32, height: i32) -> ImageInfo {
     )
 }
 
+/// Parses the SVG data, sets the container size, and renders onto `canvas`.
 fn render_dom(
     canvas: &skia_safe::Canvas,
     svg: impl AsRef<[u8]>,
@@ -409,6 +466,7 @@ fn render_dom(
     Ok(())
 }
 
+/// Reads back pixels from the surface into an [`ImageData`].
 fn read_surface_pixels(
     surface: &mut skia_safe::Surface,
     options: &RenderOptions,
@@ -432,6 +490,7 @@ fn read_surface_pixels(
     })
 }
 
+/// Convenience: creates an [`SvgRenderer`], renders the SVG to raw RGBA.
 pub fn render_svg(
     svg: impl AsRef<[u8]>,
     options: &RenderOptions,
@@ -439,6 +498,7 @@ pub fn render_svg(
     SvgRenderer::new()?.render_svg(svg, options)
 }
 
+/// Convenience: creates an [`SvgRenderer`], renders the SVG, encodes as PNG.
 pub fn render_svg_to_png(
     svg: impl AsRef<[u8]>,
     options: &RenderOptions,
@@ -446,6 +506,7 @@ pub fn render_svg_to_png(
     SvgRenderer::new()?.render_svg_to_png(svg, options)
 }
 
+/// Convenience: creates an [`SvgRenderer`], renders the SVG, encodes as JPEG.
 pub fn render_svg_to_jpeg(
     svg: impl AsRef<[u8]>,
     options: &RenderOptions,
@@ -454,6 +515,7 @@ pub fn render_svg_to_jpeg(
     SvgRenderer::new()?.render_svg_to_jpeg(svg, options, jpeg_options)
 }
 
+/// Convenience: creates an [`SvgRenderer`], renders the SVG, encodes as WebP.
 pub fn render_svg_to_webp(
     svg: impl AsRef<[u8]>,
     options: &RenderOptions,

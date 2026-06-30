@@ -1,7 +1,18 @@
 [package]
 name = "svg-renderer"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
+authors = ["limao996 <limao7325@163.com>"]
+description = "A high-performance SVG-to-raster renderer powered by Skia, with CPU and optional Vulkan GPU backends"
+license = "MIT"
+keywords = ["svg", "renderer", "skia", "vulkan", "raster"]
+categories = ["graphics", "multimedia::images", "rendering::graphics-api"]
+readme = "README.md"
+rust-version = "1.96"
+repository = "https://github.com/limao996/svg-renderer"
+documentation = "https://docs.rs/svg-renderer"
+homepage = "https://github.com/limao996/svg-renderer"
+exclude = ["examples/*.png", ".github"]
 
 [features]
 default = ["vulkan-backend"]
@@ -23,4 +34,3 @@ thiserror = "2"
 [dev-dependencies]
 futures = "0.3"
 pollster = "0.4"
-

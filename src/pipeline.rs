@@ -16,17 +16,30 @@ use crate::{
     WebpOptions,
 };
 
+/// CPU-based pipeline renderer with multiple dedicated worker threads.
+///
+/// Workers are spawned at construction and live until the renderer is
+/// dropped. Each job is dispatched to a worker using round-robin
+/// scheduling. The public API is `async` and waits via a custom
+/// [`Future`] that the worker signals on completion.
 pub struct CpuSvgPipelineRenderer {
     inner: PipelineInner,
 }
 
 impl CpuSvgPipelineRenderer {
+    /// Creates a CPU pipeline with `workers` threads.
+    ///
+    /// # Errors
+    /// Returns [`SvgRenderError::InvalidWorkerCount`] if `workers == 0`.
     pub fn new(workers: usize) -> Result<Self, SvgRenderError> {
         Ok(Self {
             inner: PipelineInner::new(workers, RenderBackend::Cpu)?,
         })
     }
 
+    /// Replaces the resource search path for all workers.
+    ///
+    /// Applied lazily on the next render call (per-job basis).
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -36,11 +49,13 @@ impl CpuSvgPipelineRenderer {
         self
     }
 
+    /// Appends a directory to the resource search path for all workers.
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.inner.add_resource_search_dir(dir);
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data on a worker thread.
     pub async fn render_svg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -49,6 +64,7 @@ impl CpuSvgPipelineRenderer {
         self.inner.render_svg(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as PNG on a worker thread.
     pub async fn render_svg_to_png(
         &self,
         svg: impl AsRef<[u8]>,
@@ -57,6 +73,7 @@ impl CpuSvgPipelineRenderer {
         self.inner.render_svg_to_png(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as JPEG on a worker thread.
     pub async fn render_svg_to_jpeg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -68,6 +85,7 @@ impl CpuSvgPipelineRenderer {
             .await
     }
 
+    /// Renders an SVG and encodes the result as WebP on a worker thread.
     pub async fn render_svg_to_webp(
         &self,
         svg: impl AsRef<[u8]>,
@@ -80,6 +98,10 @@ impl CpuSvgPipelineRenderer {
     }
 }
 
+/// Vulkan GPU pipeline renderer with multiple dedicated worker threads.
+///
+/// Each worker owns its own [`VulkanSvgRenderer`] and draws to an
+/// off-screen GPU framebuffer. Requires the `vulkan-backend` feature.
 #[cfg(feature = "vulkan-backend")]
 pub struct VulkanSvgPipelineRenderer {
     inner: PipelineInner,
@@ -87,12 +109,17 @@ pub struct VulkanSvgPipelineRenderer {
 
 #[cfg(feature = "vulkan-backend")]
 impl VulkanSvgPipelineRenderer {
+    /// Creates a Vulkan pipeline with `workers` threads.
+    ///
+    /// # Errors
+    /// Returns [`SvgRenderError::InvalidWorkerCount`] if `workers == 0`.
     pub fn new(workers: usize) -> Result<Self, SvgRenderError> {
         Ok(Self {
             inner: PipelineInner::new(workers, RenderBackend::Vulkan)?,
         })
     }
 
+    /// Replaces the resource search path for all workers.
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -102,11 +129,13 @@ impl VulkanSvgPipelineRenderer {
         self
     }
 
+    /// Appends a directory to the resource search path for all workers.
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.inner.add_resource_search_dir(dir);
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data on a worker thread.
     pub async fn render_svg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -115,6 +144,7 @@ impl VulkanSvgPipelineRenderer {
         self.inner.render_svg(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as PNG on a worker thread.
     pub async fn render_svg_to_png(
         &self,
         svg: impl AsRef<[u8]>,
@@ -123,6 +153,7 @@ impl VulkanSvgPipelineRenderer {
         self.inner.render_svg_to_png(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as JPEG on a worker thread.
     pub async fn render_svg_to_jpeg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -134,6 +165,7 @@ impl VulkanSvgPipelineRenderer {
             .await
     }
 
+    /// Renders an SVG and encodes the result as WebP on a worker thread.
     pub async fn render_svg_to_webp(
         &self,
         svg: impl AsRef<[u8]>,
@@ -146,11 +178,19 @@ impl VulkanSvgPipelineRenderer {
     }
 }
 
+/// Auto-selecting pipeline renderer with multiple dedicated worker threads.
+///
+/// Tries Vulkan first (when `vulkan-backend` is enabled), falls back to
+/// CPU. Each worker owns its own renderer instance.
 pub struct SvgPipelineRenderer {
     inner: PipelineInner,
 }
 
 impl SvgPipelineRenderer {
+    /// Creates a pipeline with `workers` threads, prefering Vulkan.
+    ///
+    /// # Errors
+    /// Returns [`SvgRenderError::InvalidWorkerCount`] if `workers == 0`.
     pub fn new(workers: usize) -> Result<Self, SvgRenderError> {
         #[cfg(feature = "vulkan-backend")]
         if let Ok(inner) = PipelineInner::new(workers, RenderBackend::Vulkan) {
@@ -162,10 +202,12 @@ impl SvgPipelineRenderer {
         })
     }
 
+    /// Returns which backend the workers are using.
     pub fn backend(&self) -> RenderBackend {
         self.inner.backend()
     }
 
+    /// Replaces the resource search path for all workers.
     pub fn set_resource_search_dirs<I, P>(&mut self, dirs: I) -> &mut Self
     where
         I: IntoIterator<Item = P>,
@@ -175,11 +217,13 @@ impl SvgPipelineRenderer {
         self
     }
 
+    /// Appends a directory to the resource search path for all workers.
     pub fn add_resource_search_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.inner.add_resource_search_dir(dir);
         self
     }
 
+    /// Renders an SVG into raw RGBA pixel data on a worker thread.
     pub async fn render_svg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -188,6 +232,7 @@ impl SvgPipelineRenderer {
         self.inner.render_svg(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as PNG on a worker thread.
     pub async fn render_svg_to_png(
         &self,
         svg: impl AsRef<[u8]>,
@@ -196,6 +241,7 @@ impl SvgPipelineRenderer {
         self.inner.render_svg_to_png(svg, options).await
     }
 
+    /// Renders an SVG and encodes the result as JPEG on a worker thread.
     pub async fn render_svg_to_jpeg(
         &self,
         svg: impl AsRef<[u8]>,
@@ -207,6 +253,7 @@ impl SvgPipelineRenderer {
             .await
     }
 
+    /// Renders an SVG and encodes the result as WebP on a worker thread.
     pub async fn render_svg_to_webp(
         &self,
         svg: impl AsRef<[u8]>,
@@ -219,14 +266,18 @@ impl SvgPipelineRenderer {
     }
 }
 
+/// Shared pipeline state: a round-robin pool of dedicated worker threads.
 struct PipelineInner {
     workers: Vec<Worker>,
+    /// Monotonically increasing counter for round-robin dispatch.
     next_worker: AtomicUsize,
+    /// Resource search directories forwarded to workers on each job.
     resource_search_dirs: Vec<PathBuf>,
     backend: RenderBackend,
 }
 
 impl PipelineInner {
+    /// Spawns `workers` threads, waiting for each to signal readiness.
     fn new(workers: usize, backend: RenderBackend) -> Result<Self, SvgRenderError> {
         if workers == 0 {
             return Err(SvgRenderError::InvalidWorkerCount { workers });
@@ -238,6 +289,7 @@ impl PipelineInner {
             let (sender, receiver) = mpsc::channel();
             let (ready_sender, ready_receiver) = mpsc::channel();
             let handle = spawn_worker(receiver, ready_sender, backend);
+            // Block until the worker has finished initializing its renderer.
             ready_receiver
                 .recv()
                 .map_err(|_| SvgRenderError::PipelineClosed)??;
@@ -315,6 +367,7 @@ impl PipelineInner {
             .into_bytes()
     }
 
+    /// Dispatches a job to the next worker via round-robin.
     fn submit(
         &self,
         kind: RenderJobKind,
@@ -336,6 +389,7 @@ impl PipelineInner {
             .send(WorkerMessage::Render(job))
             .is_err()
         {
+            // Worker has exited; complete the future with an error.
             future.complete(Err(SvgRenderError::PipelineClosed));
         }
 
@@ -354,11 +408,16 @@ impl Drop for PipelineInner {
     }
 }
 
+/// A single pipeline worker thread handle + channel sender.
 struct Worker {
     sender: mpsc::Sender<WorkerMessage>,
     handle: Option<JoinHandle<()>>,
 }
 
+/// Spawns a worker thread that processes render jobs until a `Stop`
+/// message is received or the channel is closed.
+///
+/// Signals readiness by sending `Ok(())` on the `ready` channel.
 fn spawn_worker(
     receiver: mpsc::Receiver<WorkerMessage>,
     ready: mpsc::Sender<Result<(), SvgRenderError>>,
@@ -394,6 +453,7 @@ fn spawn_worker(
     })
 }
 
+/// Owned renderer variant used inside a pipeline worker thread.
 enum WorkerRenderer {
     Cpu(CpuSvgRenderer),
     #[cfg(feature = "vulkan-backend")]
@@ -506,11 +566,15 @@ fn run_job(
     }
 }
 
+/// Messages sent from the pipeline to a worker thread.
 enum WorkerMessage {
+    /// Execute a render job.
     Render(RenderJob),
+    /// Shut down the worker.
     Stop,
 }
 
+/// A render job dispatched to a worker thread.
 struct RenderJob {
     kind: RenderJobKind,
     svg: Vec<u8>,
@@ -519,20 +583,27 @@ struct RenderJob {
     response: RenderResponse,
 }
 
+/// The kind of output to produce from a render job.
 #[derive(Clone, Copy)]
 enum RenderJobKind {
+    /// Raw RGBA pixel data.
     Rgba,
+    /// PNG-encoded bytes.
     Png,
+    /// JPEG-encoded bytes with options.
     Jpeg(JpegOptions),
+    /// WebP-encoded bytes with options.
     Webp(WebpOptions),
 }
 
+/// Heterogeneous output of a completed render job.
 enum RenderJobOutput {
     Image(ImageData),
     Bytes(Vec<u8>),
 }
 
 impl RenderJobOutput {
+    /// Extracts the `Image` variant; errors if the job produced bytes.
     fn into_image(self) -> Result<ImageData, SvgRenderError> {
         match self {
             Self::Image(image) => Ok(image),
@@ -540,6 +611,7 @@ impl RenderJobOutput {
         }
     }
 
+    /// Extracts the `Bytes` variant; errors if the job produced an image.
     fn into_bytes(self) -> Result<Vec<u8>, SvgRenderError> {
         match self {
             Self::Bytes(bytes) => Ok(bytes),
@@ -548,19 +620,30 @@ impl RenderJobOutput {
     }
 }
 
+/// Sender half of the render response channel.
+///
+/// Moved into a `RenderJob` and given to the worker. The worker calls
+/// `complete()` to write the result and wake the consumer.
 struct RenderResponse {
     shared: Arc<Mutex<RenderResponseState>>,
 }
 
+/// `Future` half of the render response channel.
+///
+/// Returned to the caller. Polling yields the job result once the
+/// worker has written it via the paired `RenderResponse`.
 struct RenderResponseFuture {
     shared: Arc<Mutex<RenderResponseState>>,
 }
 
+/// Shared state between the `RenderResponse` sender and the
+/// `RenderResponseFuture` consumer.
 struct RenderResponseState {
     result: Option<Result<RenderJobOutput, SvgRenderError>>,
     waker: Option<Waker>,
 }
 
+/// Creates a (sender, future) pair for a single render job.
 fn render_response_channel() -> (RenderResponse, RenderResponseFuture) {
     let shared = Arc::new(Mutex::new(RenderResponseState {
         result: None,
@@ -576,6 +659,7 @@ fn render_response_channel() -> (RenderResponse, RenderResponseFuture) {
 }
 
 impl RenderResponse {
+    /// Stores the result and wakes the consumer future.
     fn complete(self, result: Result<RenderJobOutput, SvgRenderError>) {
         let waker = {
             let mut state = self.shared.lock().expect("render response mutex poisoned");
@@ -590,6 +674,8 @@ impl RenderResponse {
 }
 
 impl RenderResponseFuture {
+    /// Completes the future from the pipeline side (worker exited
+    /// without sending a response).
     fn complete(&self, result: Result<RenderJobOutput, SvgRenderError>) {
         let waker = {
             let mut state = self.shared.lock().expect("render response mutex poisoned");

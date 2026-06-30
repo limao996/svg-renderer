@@ -1,3 +1,29 @@
+//! `svg-renderer` — a high-performance SVG-to-raster renderer powered by [Skia](https://skia.org).
+//!
+//! # Backends
+//!
+//! | Backend  | Feature          | Description                                  |
+//! |----------|------------------|----------------------------------------------|
+//! | CPU      | (always)         | Renders via Skia's raster backend.           |
+//! | Vulkan   | `vulkan-backend` | GPU-accelerated via Skia's Vulkan backend.   |
+//!
+//! # Pipeline mode
+//!
+//! [`SvgPipelineRenderer`] spawns dedicated worker threads for parallel
+//! rendering, suitable for throughput-oriented workloads.
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! use svg_renderer::{SvgRenderer, RenderOptions};
+//!
+//! let svg_data = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>";
+//! let opts = RenderOptions::new(800, 600).unwrap();
+//! let mut renderer = SvgRenderer::new().unwrap();
+//! let image = renderer.render_svg(svg_data, &opts).unwrap();
+//! println!("{}x{} RGBA image", image.width, image.height);
+//! ```
+
 mod error;
 mod image;
 mod options;
@@ -13,10 +39,22 @@ pub(crate) use vulkan::VulkanState;
 
 pub use error::SvgRenderError;
 pub use image::ImageData;
-pub use options::{
-    JpegAlphaOption, JpegDownsample, JpegOptions, RenderOptions, RenderSize, WebpCompression,
-    WebpOptions,
-};
+
+/// Render size configuration.
+pub use options::RenderSize;
+/// Render options: size, clear color, MSAA sample count.
+pub use options::RenderOptions;
+/// JPEG encoding options.
+pub use options::JpegOptions;
+/// JPEG chroma subsampling mode.
+pub use options::JpegDownsample;
+/// JPEG alpha handling behavior.
+pub use options::JpegAlphaOption;
+/// WebP encoding options.
+pub use options::WebpOptions;
+/// WebP compression mode (lossy / lossless).
+pub use options::WebpCompression;
+
 #[cfg(feature = "vulkan-backend")]
 pub use pipeline::VulkanSvgPipelineRenderer;
 pub use pipeline::{CpuSvgPipelineRenderer, SvgPipelineRenderer};

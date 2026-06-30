@@ -2,6 +2,10 @@ use skia_safe::{Color, jpeg_encoder, webp_encoder};
 
 use crate::SvgRenderError;
 
+/// Non-zero pixel dimensions for the output raster image.
+///
+/// Width and height must be `> 0` and `<= i32::MAX` to satisfy Skia's
+/// internal surface constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderSize {
     pub width: u32,
@@ -9,6 +13,11 @@ pub struct RenderSize {
 }
 
 impl RenderSize {
+    /// Creates a new size after validating the dimensions.
+    ///
+    /// # Errors
+    /// Returns [`SvgRenderError::InvalidSize`] if either dimension is zero
+    /// or exceeds `i32::MAX`.
     pub fn new(width: u32, height: u32) -> Result<Self, SvgRenderError> {
         if width == 0 || height == 0 {
             return Err(SvgRenderError::InvalidSize { width, height });
@@ -21,19 +30,32 @@ impl RenderSize {
         Ok(Self { width, height })
     }
 
+    /// Converts to `(i32, i32)` for Skia API calls.
     pub(crate) fn as_i32_pair(self) -> (i32, i32) {
         (self.width as i32, self.height as i32)
     }
 }
 
+/// Parameters controlling a single SVG render call.
+///
+/// # Defaults
+/// | Field          | Default         |
+/// |----------------|-----------------|
+/// | `clear_color`  | `TRANSPARENT`   |
+/// | `sample_count` | 4 (MSAA)        |
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
+    /// Output image dimensions.
     pub size: RenderSize,
+    /// Background color before rendering the SVG onto the canvas.
     pub clear_color: Color,
+    /// MSAA sample count (GPU only; ignored by CPU backend).
     pub sample_count: usize,
 }
 
 impl RenderOptions {
+    /// Creates options for the given output size with defaults for
+    /// clear color (transparent) and MSAA (4×).
     pub fn new(width: u32, height: u32) -> Result<Self, SvgRenderError> {
         Ok(Self {
             size: RenderSize::new(width, height)?,
@@ -43,10 +65,16 @@ impl RenderOptions {
     }
 }
 
+/// JPEG encoding parameters.
+///
+/// Default: quality 90, chroma subsampling in both directions, alpha ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JpegOptions {
+    /// Encoding quality (0–100, clamped by the Skia converter).
     pub quality: u32,
+    /// Chroma subsampling mode.
     pub downsample: JpegDownsample,
+    /// How to handle the alpha channel (JPEG does not support alpha).
     pub alpha_option: JpegAlphaOption,
 }
 
@@ -60,16 +88,23 @@ impl Default for JpegOptions {
     }
 }
 
+/// JPEG chroma subsampling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JpegDownsample {
+    /// Subsample horizontally and vertically (4:2:0).
     BothDirections,
+    /// Subsample horizontally only (4:2:2).
     Horizontal,
+    /// No subsampling (4:4:4).
     No,
 }
 
+/// How to encode alpha-containing images as JPEG (which has no alpha).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JpegAlphaOption {
+    /// Discard the alpha channel.
     Ignore,
+    /// Blend against black before encoding.
     BlendOnBlack,
 }
 
@@ -94,9 +129,14 @@ impl From<JpegOptions> for jpeg_encoder::Options {
     }
 }
 
+/// WebP encoding parameters.
+///
+/// Default: lossy at quality 90.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WebpOptions {
+    /// Compression mode: lossy or lossless.
     pub compression: WebpCompression,
+    /// Encoding quality (0.0–100.0, clamped). Meaningless for lossless.
     pub quality: f32,
 }
 
@@ -109,9 +149,12 @@ impl Default for WebpOptions {
     }
 }
 
+/// WebP compression mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebpCompression {
+    /// Lossy compression (VP8).
     Lossy,
+    /// Lossless compression (VP8L).
     Lossless,
 }
 

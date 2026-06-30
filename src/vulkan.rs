@@ -5,6 +5,9 @@ use skia_safe::gpu::vk as skia_vk;
 
 use crate::SvgRenderError;
 
+/// Minimal Vulkan state: instance, physical device, logical device, and
+/// a single graphics queue. The caller is responsible for ensuring the
+/// state outlives any Skia context that references it.
 pub(crate) struct VulkanState {
     entry: Entry,
     pub(crate) instance: ash::Instance,
@@ -15,6 +18,8 @@ pub(crate) struct VulkanState {
 }
 
 impl VulkanState {
+    /// Loads the Vulkan library, creates an instance, picks the first
+    /// physical device with a graphics queue, and opens a logical device.
     pub(crate) fn new() -> Result<Self, SvgRenderError> {
         let entry = load_vulkan_entry()?;
         let app_name = CString::new("svg-renderer").expect("static app name has no nul byte");
@@ -27,6 +32,7 @@ impl VulkanState {
         let instance_info = vk::InstanceCreateInfo::default().application_info(&app_info);
         let instance = unsafe { entry.create_instance(&instance_info, None)? };
 
+        // Enumerate devices and pick the first one offering graphics.
         let (physical_device, queue_family_index) = unsafe {
             instance
                 .enumerate_physical_devices()?
@@ -44,6 +50,7 @@ impl VulkanState {
                 .ok_or(SvgRenderError::NoVulkanDevice)?
         };
 
+        // Create a logical device with one graphics queue.
         let queue_priorities = [1.0f32];
         let queue_info = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family_index)
@@ -62,6 +69,7 @@ impl VulkanState {
         })
     }
 
+    /// Resolves Vulkan function pointers for Skia's `GetProc` interface.
     pub(crate) fn get_proc(&self, proc: skia_vk::GetProcOf) -> skia_vk::GetProcResult {
         match proc {
             skia_vk::GetProcOf::Instance(instance, name) => unsafe {
@@ -90,6 +98,8 @@ impl Drop for VulkanState {
     }
 }
 
+/// Tries `Entry::load()` first; on failure falls back to known platform
+/// library names (e.g. `vulkan-1.dll`, `libvulkan.so.1`).
 fn load_vulkan_entry() -> Result<Entry, SvgRenderError> {
     match unsafe { Entry::load() } {
         Ok(entry) => Ok(entry),
@@ -109,6 +119,7 @@ fn load_vulkan_entry_from_platform_names() -> Result<Entry, ash::LoadingError> {
     unsafe { Entry::load() }
 }
 
+// Platform-specific Vulkan shared library names.
 #[cfg(target_os = "windows")]
 const VULKAN_LIBRARY_NAMES: &[&str] = &["vulkan-1.dll"];
 

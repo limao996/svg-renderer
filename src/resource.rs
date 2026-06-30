@@ -10,10 +10,17 @@ use skia_safe::{
     resources::{ResourceProvider, UReqResourceProvider},
 };
 
+/// A Skia [`ResourceProvider`] that:
+/// - Caches loaded resources (per path + name) in a shared `HashMap`.
+/// - Probes local filesystem directories before falling back to HTTP(S).
+/// - Is `Clone` + `Send` for sharing across threads (pipeline workers).
 #[derive(Debug, Clone)]
 pub(crate) struct CachedResourceProvider {
+    // HTTP(S) fetcher backed by `ureq`; used as fallback.
     inner: Arc<UReqResourceProvider>,
+    // Shared cache keyed by `"{resource_path}\0{resource_name}"` or just `resource_name`.
     cache: Arc<Mutex<HashMap<String, Data>>>,
+    // Ordered list of local directories to search.
     search_dirs: Arc<Mutex<Vec<PathBuf>>>,
 }
 
@@ -46,6 +53,8 @@ impl CachedResourceProvider {
         search_dirs.extend(dirs.into_iter().map(Into::into));
     }
 
+    /// Composite key so `("fonts", "Roboto.ttf")` and `("images", "logo.svg")`
+    /// don't collide even if both refer to a file named identically.
     fn cache_key(resource_path: &str, resource_name: &str) -> String {
         if resource_path.is_empty() {
             resource_name.to_owned()
@@ -54,16 +63,21 @@ impl CachedResourceProvider {
         }
     }
 
+    /// Tries to load a resource from the local filesystem.
     fn load_local(&self, resource_path: &str, resource_name: &str) -> Option<Data> {
         for path in self.local_candidates(resource_path, resource_name) {
             if let Ok(bytes) = fs::read(path) {
                 return Some(Data::new_copy(&bytes));
             }
         }
-
         None
     }
 
+    /// Builds candidate paths for a local resource lookup.
+    ///
+    /// Skips URL-like and data URIs. Tries:
+    /// 1. `{resource_path}/{resource_name}` (if resource_path is a local dir)
+    /// 2. `{search_dir}/{resource_name}` for each registered search directory.
     fn local_candidates(&self, resource_path: &str, resource_name: &str) -> Vec<PathBuf> {
         let resource_name = resource_name.trim();
         if resource_name.is_empty()
@@ -91,6 +105,9 @@ impl CachedResourceProvider {
     }
 }
 
+/// Returns true if the string looks like a URL (http, https, file) that
+/// should be fetched by the upstream `UReqResourceProvider` instead of
+/// the local filesystem.
 fn is_url_like(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://") || value.starts_with("file://")
 }
@@ -99,10 +116,12 @@ impl ResourceProvider for CachedResourceProvider {
     fn load(&self, resource_path: &str, resource_name: &str) -> Option<Data> {
         let key = Self::cache_key(resource_path, resource_name);
 
+        // Check the in-memory cache first.
         if let Some(data) = self.cache.lock().ok()?.get(&key).cloned() {
             return Some(data);
         }
 
+        // Try local filesystem, then fall back to HTTP(S) via ureq.
         let data = self
             .load_local(resource_path, resource_name)
             .or_else(|| self.inner.load(resource_path, resource_name))?;
