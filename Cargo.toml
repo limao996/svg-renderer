@@ -15,18 +15,16 @@ exclude = ["examples/*.png", ".github", ".idea/**"]
 
 [features]
 default = ["vulkan-backend"]
-vulkan-backend = ["dep:ash"]
+vulkan-backend = ["dep:ash", "skia-safe/vulkan"]
 
 [dependencies]
 ash = { version = "0.38", default-features = true, optional = true }
 skia-safe = { version = "0.99", default-features = true, features = [
-    "vulkan",
     "svg",
     "webp",
     "jpeg",
     "no-compile",
     "ureq",
-    "freetype-woff2",
 ] }
 thiserror = "2"
 

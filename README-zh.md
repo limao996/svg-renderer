@@ -41,14 +41,14 @@
 
 ```toml
 [dependencies]
-svg-renderer = "1.0.1"
+svg-renderer = "1.0.2"
 ```
 
 默认启用 Vulkan 后端。若只需 CPU：
 
 ```toml
 [dependencies]
-svg-renderer = { version = "1.0.1", default-features = false }
+svg-renderer = { version = "1.0.2", default-features = false }
 ```
 
 ### Feature 开关

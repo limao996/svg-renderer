@@ -41,14 +41,14 @@ This crate was developed with **Vibe Coding** using **GPT-5.5**.
 
 ```toml
 [dependencies]
-svg-renderer = "1.0.1"
+svg-renderer = "1.0.2"
 ```
 
 Default features enable the Vulkan backend. For CPU-only:
 
 ```toml
 [dependencies]
-svg-renderer = { version = "1.0.1", default-features = false }
+svg-renderer = { version = "1.0.2", default-features = false }
 ```
 
 ### Feature flags
