@@ -2,3 +2,4 @@
 Cargo.lock
 .codebuddy
 examples/assets/*
+.idea
