@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.96+-orange" alt="Rust 1.96+" />
+  <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust Edition 2024" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
   <img src="https://img.shields.io/badge/edition-2024-purple" alt="Rust Edition 2024" />
 </p>
@@ -60,9 +60,32 @@ svg-renderer = { version = "1.0.1", default-features = false }
 
 ### Requirements
 
-- Rust **1.96** or newer
+- A Rust toolchain compatible with Edition 2024
 - Skia build / runtime dependencies (via `skia-safe`)
 - Vulkan drivers + runtime — only if using the Vulkan backend
+
+### skia-bindings binary download proxy
+
+`skia-safe` builds through `skia-bindings`, which tries to download a prebuilt Skia binary during compilation. If that download fails because GitHub or the binary host is unreachable, configure a curl proxy and run the build again.
+
+For a one-off build:
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+cargo build
+```
+
+For a global curl proxy, create or edit the curl configuration file:
+
+- Windows: `%USERPROFILE%\.curlrc`
+- Linux / macOS: `~/.curlrc`
+
+```text
+proxy = "http://127.0.0.1:7890"
+```
+
+Use your own proxy address and port. Remove the setting after the build if you do not want all curl requests to use that proxy.
 
 ---
 

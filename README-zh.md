@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.96+-orange" alt="Rust 1.96+" />
+  <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust Edition 2024" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
   <img src="https://img.shields.io/badge/edition-2024-purple" alt="Rust Edition 2024" />
 </p>
@@ -60,9 +60,32 @@ svg-renderer = { version = "1.0.1", default-features = false }
 
 ### 环境要求
 
-- Rust **1.96** 或更高版本
+- 兼容 Rust Edition 2024 的 Rust 工具链
 - `skia-safe` 所需的 Skia 构建 / 运行时环境
 - 仅在使用 Vulkan 后端时需要 GPU 驱动
+
+### skia-bindings 预构建二进制下载代理
+
+`skia-safe` 会通过 `skia-bindings` 构建，并在编译期间尝试下载 Skia 预构建二进制。如果因为 GitHub 或二进制托管地址无法访问导致下载失败，需要设置 curl 代理后重新构建。
+
+单次构建可在当前终端设置：
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+cargo build
+```
+
+也可以设置 curl 的全局代理配置，创建或编辑 curl 配置文件：
+
+- Windows：`%USERPROFILE%\.curlrc`
+- Linux / macOS：`~/.curlrc`
+
+```text
+proxy = "http://127.0.0.1:7890"
+```
+
+请替换为自己的代理地址和端口。如果不希望所有 curl 请求都走代理，构建完成后删除该配置。
 
 ---
 
