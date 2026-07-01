@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
@@ -13,12 +14,12 @@ use skia_safe::{
 /// A Skia [`ResourceProvider`] that:
 /// - Caches loaded resources (per path + name) in a shared `HashMap`.
 /// - Probes local filesystem directories before falling back to HTTP(S).
-/// - Is `Clone` + `Send` for sharing across threads (pipeline workers).
+/// - Is cheaply cloneable for sharing state with Skia's native provider wrapper.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedResourceProvider {
     // HTTP(S) fetcher backed by `ureq`; used as fallback.
-    inner: Arc<UReqResourceProvider>,
-    // Shared cache keyed by `"{resource_path}\0{resource_name}"` or just `resource_name`.
+    inner: Rc<UReqResourceProvider>,
+    // Shared cache keyed by local path or `"{resource_path}\0{resource_name}"` for fallback.
     cache: Arc<Mutex<HashMap<String, Data>>>,
     // Ordered list of local directories to search.
     search_dirs: Arc<Mutex<Vec<PathBuf>>>,
@@ -27,7 +28,7 @@ pub(crate) struct CachedResourceProvider {
 impl CachedResourceProvider {
     pub(crate) fn new(font_mgr: impl Into<FontMgr>) -> Self {
         Self {
-            inner: Arc::new(UReqResourceProvider::new(font_mgr)),
+            inner: Rc::new(UReqResourceProvider::new(font_mgr)),
             cache: Arc::new(Mutex::new(HashMap::new())),
             search_dirs: Arc::new(Mutex::new(Vec::new())),
         }
@@ -64,10 +65,11 @@ impl CachedResourceProvider {
     }
 
     /// Tries to load a resource from the local filesystem.
-    fn load_local(&self, resource_path: &str, resource_name: &str) -> Option<Data> {
+    fn load_local(&self, resource_path: &str, resource_name: &str) -> Option<(String, Data)> {
         for path in self.local_candidates(resource_path, resource_name) {
-            if let Ok(bytes) = fs::read(path) {
-                return Some(Data::new_copy(&bytes));
+            if let Ok(bytes) = fs::read(&path) {
+                let key = format!("local\0{}", path.to_string_lossy());
+                return Some((key, Data::new_copy(&bytes)));
             }
         }
         None
@@ -121,10 +123,13 @@ impl ResourceProvider for CachedResourceProvider {
             return Some(data);
         }
 
-        // Try local filesystem, then fall back to HTTP(S) via ureq.
-        let data = self
-            .load_local(resource_path, resource_name)
-            .or_else(|| self.inner.load(resource_path, resource_name))?;
+        if let Some((local_key, data)) = self.load_local(resource_path, resource_name) {
+            self.cache.lock().ok()?.insert(local_key, data.clone());
+            return Some(data);
+        }
+
+        // Fall back to HTTP(S) via ureq.
+        let data = self.inner.load(resource_path, resource_name)?;
         self.cache.lock().ok()?.insert(key, data.clone());
         Some(data)
     }
@@ -161,5 +166,31 @@ mod tests {
             cloned.local_candidates("", "image.png"),
             vec![PathBuf::from("assets").join("image.png")]
         );
+    }
+
+    #[test]
+    fn changing_search_dirs_does_not_reuse_same_named_local_resource() {
+        let root = std::env::temp_dir().join(format!(
+            "svg-renderer-resource-cache-{}",
+            std::process::id()
+        ));
+        let first_dir = root.join("first");
+        let second_dir = root.join("second");
+        fs::create_dir_all(&first_dir).unwrap();
+        fs::create_dir_all(&second_dir).unwrap();
+        fs::write(first_dir.join("image.bin"), b"first").unwrap();
+        fs::write(second_dir.join("image.bin"), b"second").unwrap();
+
+        let provider = CachedResourceProvider::new(FontMgr::default());
+        provider.set_search_dirs([first_dir]);
+        let first = provider.load("", "image.bin").unwrap();
+
+        provider.set_search_dirs([second_dir]);
+        let second = provider.load("", "image.bin").unwrap();
+
+        assert_eq!(first.as_bytes(), b"first");
+        assert_eq!(second.as_bytes(), b"second");
+
+        let _ = fs::remove_dir_all(root);
     }
 }

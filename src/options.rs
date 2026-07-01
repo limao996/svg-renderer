@@ -2,10 +2,14 @@ use skia_safe::{Color, jpeg_encoder, webp_encoder};
 
 use crate::SvgRenderError;
 
+/// Maximum size of a rendered RGBA buffer.
+pub(crate) const MAX_RENDER_BYTES: usize = 512 * 1024 * 1024;
+
 /// Non-zero pixel dimensions for the output raster image.
 ///
 /// Width and height must be `> 0` and `<= i32::MAX` to satisfy Skia's
-/// internal surface constraints.
+/// internal surface constraints. The total RGBA buffer must also fit
+/// within the crate's maximum render allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderSize {
     pub width: u32,
@@ -17,13 +21,21 @@ impl RenderSize {
     ///
     /// # Errors
     /// Returns [`SvgRenderError::InvalidSize`] if either dimension is zero
-    /// or exceeds `i32::MAX`.
+    /// or exceeds `i32::MAX`, or if the resulting RGBA buffer would be too large.
     pub fn new(width: u32, height: u32) -> Result<Self, SvgRenderError> {
         if width == 0 || height == 0 {
             return Err(SvgRenderError::InvalidSize { width, height });
         }
 
         if width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return Err(SvgRenderError::InvalidSize { width, height });
+        }
+
+        let byte_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or(SvgRenderError::InvalidSize { width, height })?;
+        if byte_len > MAX_RENDER_BYTES {
             return Err(SvgRenderError::InvalidSize { width, height });
         }
 
@@ -184,6 +196,14 @@ mod tests {
         ));
         assert!(matches!(
             RenderSize::new(32, 0),
+            Err(SvgRenderError::InvalidSize { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_render_targets_that_would_allocate_too_many_bytes() {
+        assert!(matches!(
+            RenderSize::new(i32::MAX as u32, i32::MAX as u32),
             Err(SvgRenderError::InvalidSize { .. })
         ));
     }

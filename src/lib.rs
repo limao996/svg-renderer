@@ -40,20 +40,20 @@ pub(crate) use vulkan::VulkanState;
 pub use error::SvgRenderError;
 pub use image::ImageData;
 
-/// Render size configuration.
-pub use options::RenderSize;
-/// Render options: size, clear color, MSAA sample count.
-pub use options::RenderOptions;
-/// JPEG encoding options.
-pub use options::JpegOptions;
-/// JPEG chroma subsampling mode.
-pub use options::JpegDownsample;
 /// JPEG alpha handling behavior.
 pub use options::JpegAlphaOption;
-/// WebP encoding options.
-pub use options::WebpOptions;
+/// JPEG chroma subsampling mode.
+pub use options::JpegDownsample;
+/// JPEG encoding options.
+pub use options::JpegOptions;
+/// Render options: size, clear color, MSAA sample count.
+pub use options::RenderOptions;
+/// Render size configuration.
+pub use options::RenderSize;
 /// WebP compression mode (lossy / lossless).
 pub use options::WebpCompression;
+/// WebP encoding options.
+pub use options::WebpOptions;
 
 #[cfg(feature = "vulkan-backend")]
 pub use pipeline::VulkanSvgPipelineRenderer;

@@ -16,6 +16,7 @@ use skia_safe::{
 use crate::VulkanState;
 use crate::{
     CachedResourceProvider, ImageData, JpegOptions, RenderOptions, SvgRenderError, WebpOptions,
+    options::MAX_RENDER_BYTES,
 };
 
 /// Rendering backend kind.
@@ -474,8 +475,24 @@ fn read_surface_pixels(
 ) -> Result<ImageData, SvgRenderError> {
     let (width, height) = options.size.as_i32_pair();
     let info = rgba_image_info(width, height);
-    let row_bytes = width as usize * 4;
-    let byte_len = row_bytes * height as usize;
+    let row_bytes = (width as usize)
+        .checked_mul(4)
+        .ok_or(SvgRenderError::InvalidSize {
+            width: options.size.width,
+            height: options.size.height,
+        })?;
+    let byte_len = row_bytes
+        .checked_mul(height as usize)
+        .ok_or(SvgRenderError::InvalidSize {
+            width: options.size.width,
+            height: options.size.height,
+        })?;
+    if byte_len > MAX_RENDER_BYTES {
+        return Err(SvgRenderError::InvalidSize {
+            width: options.size.width,
+            height: options.size.height,
+        });
+    }
     readback_buffer.resize(byte_len, 0);
 
     if !surface.read_pixels(&info, readback_buffer, row_bytes, IPoint::new(0, 0)) {
