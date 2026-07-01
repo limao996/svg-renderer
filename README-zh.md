@@ -76,6 +76,40 @@ $env:HTTP_PROXY = "http://127.0.0.1:7890"
 cargo build
 ```
 
+如果想在 PowerShell 当前终端立即设置代理，并永久增加用户级代理环境变量：
+
+```powershell
+$proxy = "http://127.0.0.1:7890"
+
+$env:HTTP_PROXY = $proxy
+$env:HTTPS_PROXY = $proxy
+
+[Environment]::SetEnvironmentVariable("HTTP_PROXY", $proxy, "User")
+[Environment]::SetEnvironmentVariable("HTTPS_PROXY", $proxy, "User")
+
+Write-Host "代理已设置为 $proxy。"
+Write-Host "当前终端可直接使用，新打开的终端也会继承该配置。"
+```
+
+如果习惯使用 CMD，可以保存并运行下面的批处理脚本：
+
+```bat
+@echo off
+set "PROXY=http://127.0.0.1:7890"
+
+rem 当前终端立即生效。
+set HTTP_PROXY=%PROXY%
+set HTTPS_PROXY=%PROXY%
+
+rem 对之后打开的新终端永久生效。
+setx HTTP_PROXY "http://127.0.0.1:7890"
+setx HTTPS_PROXY "http://127.0.0.1:7890"
+
+echo 代理已设置为 %PROXY%。
+echo 当前终端可直接使用，新打开的终端也会继承该配置。
+pause
+```
+
 也可以设置 curl 的全局代理配置，创建或编辑 curl 配置文件：
 
 - Windows：`%USERPROFILE%\.curlrc`

@@ -76,6 +76,40 @@ $env:HTTP_PROXY = "http://127.0.0.1:7890"
 cargo build
 ```
 
+To set the proxy in PowerShell for the current terminal and permanently add user-level proxy environment variables:
+
+```powershell
+$proxy = "http://127.0.0.1:7890"
+
+$env:HTTP_PROXY = $proxy
+$env:HTTPS_PROXY = $proxy
+
+[Environment]::SetEnvironmentVariable("HTTP_PROXY", $proxy, "User")
+[Environment]::SetEnvironmentVariable("HTTPS_PROXY", $proxy, "User")
+
+Write-Host "Proxy has been set to $proxy."
+Write-Host "The current terminal can use it immediately; new terminals will inherit it."
+```
+
+If you prefer CMD, save and run this batch script:
+
+```bat
+@echo off
+set "PROXY=http://127.0.0.1:7890"
+
+rem Apply to the current terminal session immediately.
+set HTTP_PROXY=%PROXY%
+set HTTPS_PROXY=%PROXY%
+
+rem Persist for new terminal sessions.
+setx HTTP_PROXY "http://127.0.0.1:7890"
+setx HTTPS_PROXY "http://127.0.0.1:7890"
+
+echo Proxy has been set to %PROXY%.
+echo The current terminal can use it immediately; new terminals will inherit it.
+pause
+```
+
 For a global curl proxy, create or edit the curl configuration file:
 
 - Windows: `%USERPROFILE%\.curlrc`
